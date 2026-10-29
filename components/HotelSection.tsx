@@ -12,9 +12,9 @@ export interface Hotel {
 }
 
 export interface HotelsData {
-  budget: Hotel;
-  mid_range: Hotel;
-  premium: Hotel;
+  budget?: Hotel;
+  mid_range?: Hotel;
+  premium?: Hotel;
 }
 
 // ── Config ─────────────────────────────────────────────────────────────────
@@ -72,11 +72,22 @@ function HotelCard({ hotel, tier, destination }: { hotel: Hotel; tier: typeof ti
 
 // ── Section wrapper ────────────────────────────────────────────────────────
 
-export function HotelSection({ hotels, destination }: { hotels: HotelsData; destination?: string }) {
+export function HotelSection({
+  hotels,
+  destination,
+  hotelBudgetPerNight,
+}: {
+  hotels: HotelsData;
+  destination?: string;
+  hotelBudgetPerNight?: number;
+}) {
+  const availableTiers = tiers.filter((tier) => Boolean(hotels[tier.key]));
+  if (availableTiers.length === 0) return null;
+
   return (
     <div className="mt-8">
       {/* Section header */}
-      <div className="flex items-center gap-3 mb-5">
+      <div className="flex items-center gap-3 mb-2">
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-orange-200 to-transparent" />
         <h2 className="font-display text-xl font-bold text-stone-800 px-2 whitespace-nowrap">
           🛏️ Where to Stay
@@ -84,10 +95,16 @@ export function HotelSection({ hotels, destination }: { hotels: HotelsData; dest
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-orange-200 to-transparent" />
       </div>
 
-      {/* 3 hotel cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {tiers.map((tier) => (
-          <HotelCard key={tier.key} hotel={hotels[tier.key]} tier={tier} destination={destination} />
+      {typeof hotelBudgetPerNight === 'number' && (
+        <p className="text-center text-xs text-stone-500 mb-5">
+          Stays within ₹{hotelBudgetPerNight.toLocaleString('en-IN')} per night
+        </p>
+      )}
+
+      {/* Hotel cards */}
+      <div className={`grid grid-cols-1 ${availableTiers.length === 1 ? 'max-w-md mx-auto' : availableTiers.length === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'} gap-4 ${typeof hotelBudgetPerNight !== 'number' ? 'mt-5' : ''}`}>
+        {availableTiers.map((tier) => (
+          <HotelCard key={tier.key} hotel={hotels[tier.key]!} tier={tier} destination={destination} />
         ))}
       </div>
     </div>

@@ -26,6 +26,7 @@ type Interest = (typeof INTERESTS)[number]['label'];
 interface Itinerary {
   days: DayPlan[];
   hotels?: HotelsData;
+  hotelBudgetPerNight?: number;
 }
 
 // --- Loading skeleton ---
@@ -348,7 +349,11 @@ export default function PlanPage() {
 
             {/* Hotel section (new format only) */}
             {itinerary.hotels && (
-              <HotelSection hotels={itinerary.hotels} destination={destination} />
+              <HotelSection
+                hotels={itinerary.hotels}
+                destination={destination}
+                hotelBudgetPerNight={itinerary.hotelBudgetPerNight}
+              />
             )}
 
             {/* Re-plan */}

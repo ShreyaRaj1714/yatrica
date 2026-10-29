@@ -11,6 +11,7 @@ import { HotelSection, type HotelsData } from '@/components/HotelSection';
 interface ItineraryJson {
   days: DayPlan[];
   hotels?: HotelsData;        // only present on new-format trips
+  hotelBudgetPerNight?: number;
 }
 
 interface Trip {
@@ -109,7 +110,11 @@ function TripCard({ trip }: { trip: Trip }) {
 
           {/* Hotels — only for new-format trips */}
           {hasHotels && (
-            <HotelSection hotels={trip.itinerary_json.hotels!} destination={trip.destination} />
+            <HotelSection
+              hotels={trip.itinerary_json.hotels!}
+              destination={trip.destination}
+              hotelBudgetPerNight={trip.itinerary_json.hotelBudgetPerNight}
+            />
           )}
         </div>
       )}
