@@ -10,15 +10,37 @@ interface ItineraryRequestBody {
   interests: string[];
 }
 
-interface DayPlan {
-  day: number;
-  morning: string;
-  afternoon: string;
-  evening: string;
+export interface Activity {
+  time: 'morning' | 'afternoon' | 'evening';
+  title: string;
+  description: string;
+  place_name: string;
+  area: string;
+  approx_lat: number;
+  approx_lng: number;
 }
 
-interface Itinerary {
+export interface DayPlan {
+  day: number;
+  activities: Activity[];
+}
+
+export interface Hotel {
+  name: string;
+  area: string;
+  price_per_night_inr: number;
+  why_recommended: string;
+  approx_lat: number;
+  approx_lng: number;
+}
+
+export interface Itinerary {
   days: DayPlan[];
+  hotels: {
+    budget: Hotel;
+    mid_range: Hotel;
+    premium: Hotel;
+  };
 }
 
 // --- Route handler ---
@@ -52,32 +74,89 @@ export async function POST(req: NextRequest) {
         : 'general sightseeing';
 
     const prompt = `
-You are a travel planning assistant. Generate a detailed day-by-day travel itinerary.
+You are an expert travel planning assistant with deep knowledge of Indian destinations. Generate a rich, realistic day-by-day travel itinerary.
 
 Trip details:
 - Destination: ${destination}
 - Duration: ${days} day(s)
-- Budget: ₹${budget} INR total (Indian Rupees)
+- Total Budget: ₹${budget} INR (Indian Rupees)
 - Interests: ${interestsList}
 
-Important: The budget is in Indian Rupees (INR), not USD. Recommend activities, restaurants, and accommodation that are realistically priced within this INR budget. Use ₹ when mentioning any prices.
+Important rules:
+- All prices must be in Indian Rupees (₹ INR). Budget accordingly — ₹${budget} is the TOTAL trip budget.
+- Use ₹ symbol when mentioning prices in descriptions.
+- Provide realistic approximate GPS coordinates (approx_lat, approx_lng) for every activity and hotel — these will be plotted on a map.
+- Each day must have exactly 3 activities: one morning, one afternoon, one evening.
+- Recommend 3 hotels: one budget, one mid-range, one premium — all in or near ${destination}.
 
-Respond ONLY with a valid JSON object. Do not include markdown, code fences, backticks, or any explanation — just raw JSON.
+Respond ONLY with a valid JSON object. Do not include markdown, code fences, backticks, or any explanation — output raw JSON only.
 
-The JSON must follow this exact structure:
+The JSON must follow this EXACT structure (no extra fields, no missing fields):
 {
   "days": [
     {
       "day": 1,
-      "morning": "Description of morning activity",
-      "afternoon": "Description of afternoon activity",
-      "evening": "Description of evening activity"
+      "activities": [
+        {
+          "time": "morning",
+          "title": "Short activity title",
+          "description": "1–2 sentence description with any relevant prices in ₹",
+          "place_name": "Exact name of the place",
+          "area": "Neighbourhood or town name",
+          "approx_lat": 28.6139,
+          "approx_lng": 77.2090
+        },
+        {
+          "time": "afternoon",
+          "title": "Short activity title",
+          "description": "1–2 sentence description",
+          "place_name": "Exact name of the place",
+          "area": "Neighbourhood or town name",
+          "approx_lat": 28.6200,
+          "approx_lng": 77.2100
+        },
+        {
+          "time": "evening",
+          "title": "Short activity title",
+          "description": "1–2 sentence description",
+          "place_name": "Exact name of the place",
+          "area": "Neighbourhood or town name",
+          "approx_lat": 28.6300,
+          "approx_lng": 77.2200
+        }
+      ]
     }
-  ]
+  ],
+  "hotels": {
+    "budget": {
+      "name": "Hotel name",
+      "area": "Neighbourhood or town",
+      "price_per_night_inr": 1500,
+      "why_recommended": "1 sentence reason",
+      "approx_lat": 28.6150,
+      "approx_lng": 77.2080
+    },
+    "mid_range": {
+      "name": "Hotel name",
+      "area": "Neighbourhood or town",
+      "price_per_night_inr": 4500,
+      "why_recommended": "1 sentence reason",
+      "approx_lat": 28.6160,
+      "approx_lng": 77.2085
+    },
+    "premium": {
+      "name": "Hotel name",
+      "area": "Neighbourhood or town",
+      "price_per_night_inr": 12000,
+      "why_recommended": "1 sentence reason",
+      "approx_lat": 28.6170,
+      "approx_lng": 77.2090
+    }
+  }
 }
 
 Generate exactly ${days} day object(s) in the "days" array, numbered 1 through ${days}.
-Keep each activity description concise (1–2 sentences), specific to ${destination}, and mindful of the ₹${budget} INR budget.
+Tailor every activity and hotel to ${destination}, the ₹${budget} INR budget, and the interests: ${interestsList}.
 `.trim();
 
     // 4. Call Gemini

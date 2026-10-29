@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, FormEvent } from 'react';
+import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabaseClient';
+import { DayCard, type DayPlan, isNewFormat } from '@/components/DayCard';
+import { HotelSection, type HotelsData } from '@/components/HotelSection';
+import type { MapMarker } from '@/components/ItineraryMap';
+
+// Leaflet uses `window` — must be loaded client-side only
+const ItineraryMap = dynamic(() => import('@/components/ItineraryMap'), { ssr: false });
 
 // --- Types ---
 
@@ -16,47 +23,9 @@ const INTERESTS = [
 
 type Interest = (typeof INTERESTS)[number]['label'];
 
-interface DayPlan {
-  day: number;
-  morning: string;
-  afternoon: string;
-  evening: string;
-}
-
 interface Itinerary {
   days: DayPlan[];
-}
-
-// --- Day card ---
-
-const timeSlots = [
-  { key: 'morning'   as const, icon: '🌅', label: 'Morning',   bg: 'from-amber-50 to-orange-50',  border: 'border-amber-100'  },
-  { key: 'afternoon' as const, icon: '☀️', label: 'Afternoon', bg: 'from-sky-50 to-teal-50',      border: 'border-sky-100'    },
-  { key: 'evening'   as const, icon: '🌙', label: 'Evening',   bg: 'from-violet-50 to-indigo-50', border: 'border-violet-100' },
-];
-
-function DayCard({ plan }: { plan: DayPlan }) {
-  return (
-    <div className="rounded-2xl overflow-hidden shadow-md shadow-orange-100/60 border border-orange-100 bg-white transition-transform duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-orange-200/50">
-      <div className="bg-gradient-to-r from-orange-500 to-rose-500 px-6 py-4 flex items-center gap-3">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white text-sm font-bold">
-          {plan.day}
-        </span>
-        <h3 className="font-display text-white font-bold text-lg tracking-wide">Day {plan.day}</h3>
-      </div>
-      <div className="divide-y divide-stone-100">
-        {timeSlots.map(({ key, icon, label, bg, border }) => (
-          <div key={key} className={`bg-gradient-to-r ${bg} px-6 py-4 border-l-4 ${border}`}>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-base">{icon}</span>
-              <span className="text-xs font-bold uppercase tracking-widest text-stone-400">{label}</span>
-            </div>
-            <p className="text-sm text-stone-700 leading-relaxed">{plan[key]}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  hotels?: HotelsData;
 }
 
 // --- Loading skeleton ---
@@ -89,13 +58,11 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 function SaveBanner({ status, errorMsg }: { status: SaveStatus; errorMsg: string | null }) {
   if (status === 'idle') return null;
-
   const configs = {
-    saving: { bg: 'bg-amber-50 border-amber-200',  text: 'text-amber-700', icon: '⏳', msg: 'Saving trip…'       },
-    saved:  { bg: 'bg-teal-50 border-teal-200',    text: 'text-teal-700',  icon: '✅', msg: 'Trip saved!'        },
-    error:  { bg: 'bg-red-50 border-red-200',      text: 'text-red-700',   icon: '⚠️', msg: errorMsg ?? 'Save failed' },
+    saving: { bg: 'bg-amber-50 border-amber-200',  text: 'text-amber-700', icon: '⏳', msg: 'Saving trip…'             },
+    saved:  { bg: 'bg-teal-50 border-teal-200',    text: 'text-teal-700',  icon: '✅', msg: 'Trip saved!'              },
+    error:  { bg: 'bg-red-50 border-red-200',      text: 'text-red-700',   icon: '⚠️', msg: errorMsg ?? 'Save failed'  },
   };
-
   const c = configs[status];
   return (
     <div className={`flex items-center gap-3 rounded-xl border px-5 py-3 text-sm font-medium ${c.bg} ${c.text} transition-all`}>
@@ -103,6 +70,59 @@ function SaveBanner({ status, errorMsg }: { status: SaveStatus; errorMsg: string
       {c.msg}
     </div>
   );
+}
+
+// --- Marker builder ---
+
+const TIME_COLORS: Record<string, string> = {
+  morning:   '#f97316', // orange
+  afternoon: '#0ea5e9', // sky
+  evening:   '#8b5cf6', // violet
+};
+const TIME_EMOJI: Record<string, string> = {
+  morning: '🌅', afternoon: '☀️', evening: '🌙',
+};
+const HOTEL_CONFIG = {
+  budget:    { emoji: '🏠', color: '#10b981' },
+  mid_range: { emoji: '🏨', color: '#3b82f6' },
+  premium:   { emoji: '🏰', color: '#f59e0b' },
+} as const;
+
+function buildMarkers(itinerary: Itinerary): MapMarker[] {
+  const markers: MapMarker[] = [];
+
+  for (const day of itinerary.days) {
+    if (!isNewFormat(day)) continue;
+    for (const act of day.activities) {
+      if (!act.approx_lat || !act.approx_lng) continue;
+      markers.push({
+        lat:      act.approx_lat,
+        lng:      act.approx_lng,
+        label:    act.title,
+        sublabel: `Day ${day.day} · ${act.place_name}${act.area ? ` · ${act.area}` : ''}`,
+        emoji:    TIME_EMOJI[act.time] ?? '📍',
+        color:    TIME_COLORS[act.time] ?? '#f97316',
+      });
+    }
+  }
+
+  if (itinerary.hotels) {
+    for (const tier of ['budget', 'mid_range', 'premium'] as const) {
+      const h = itinerary.hotels[tier];
+      if (!h?.approx_lat || !h?.approx_lng) continue;
+      const cfg = HOTEL_CONFIG[tier];
+      markers.push({
+        lat:      h.approx_lat,
+        lng:      h.approx_lng,
+        label:    h.name,
+        sublabel: `${tier === 'mid_range' ? 'Mid-Range' : tier.charAt(0).toUpperCase() + tier.slice(1)} · ₹${h.price_per_night_inr.toLocaleString('en-IN')}/night`,
+        emoji:    cfg.emoji,
+        color:    cfg.color,
+      });
+    }
+  }
+
+  return markers;
 }
 
 // --- Main Page ---
@@ -117,19 +137,17 @@ export default function PlanPage() {
   const [itinerary, setItinerary] = useState<Itinerary | null>(null);
   const [error, setError]         = useState<string | null>(null);
 
-  const [saveStatus, setSaveStatus]   = useState<SaveStatus>('idle');
-  const [saveError, setSaveError]     = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError]   = useState<string | null>(null);
 
   const toggleInterest = (label: Interest) =>
     setInterests((prev) =>
       prev.includes(label) ? prev.filter((i) => i !== label) : [...prev, label]
     );
 
-  // Save trip to Supabase
   const saveTrip = async (generatedItinerary: Itinerary) => {
     setSaveStatus('saving');
     setSaveError(null);
-
     const { error: dbError } = await supabase.from('trips').insert({
       destination,
       days: Number(days),
@@ -137,14 +155,12 @@ export default function PlanPage() {
       interests,
       itinerary_json: generatedItinerary,
     });
-
     if (dbError) {
       console.error('[saveTrip]', dbError.message);
       setSaveError(dbError.message);
       setSaveStatus('error');
     } else {
       setSaveStatus('saved');
-      // Auto-reset banner after 4 s
       setTimeout(() => setSaveStatus('idle'), 4000);
     }
   };
@@ -162,15 +178,11 @@ export default function PlanPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ destination, days: Number(days), budget: Number(budget), interests }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-
-      const generatedItinerary = data as Itinerary;
-      setItinerary(generatedItinerary);
-
-      // Save to Supabase after successful generation
-      await saveTrip(generatedItinerary);
+      const generated = data as Itinerary;
+      setItinerary(generated);
+      await saveTrip(generated);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
@@ -181,7 +193,7 @@ export default function PlanPage() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-teal-50">
 
-      {/* ── Hero bar ── */}
+      {/* Hero bar */}
       <div className="relative overflow-hidden bg-gradient-to-r from-orange-500 via-rose-500 to-teal-600 px-6 py-10 text-center">
         <div className="absolute inset-0 bg-dot-pattern opacity-20 pointer-events-none" />
         <div className="relative z-10">
@@ -194,7 +206,7 @@ export default function PlanPage() {
         </div>
       </div>
 
-      {/* ── Form + Results ── */}
+      {/* Form + Results */}
       <div className="max-w-2xl mx-auto px-4 py-12 space-y-10">
 
         {/* Form card */}
@@ -207,12 +219,8 @@ export default function PlanPage() {
                 🗺️ Destination
               </label>
               <input
-                id="destination"
-                type="text"
-                required
-                placeholder="e.g. Kyoto, Japan"
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
+                id="destination" type="text" required placeholder="e.g. Kyoto, Japan"
+                value={destination} onChange={(e) => setDestination(e.target.value)}
                 className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200"
               />
             </div>
@@ -220,33 +228,18 @@ export default function PlanPage() {
             {/* Days & Budget */}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="days" className="text-sm font-semibold text-stone-700">
-                  📅 Number of Days
-                </label>
+                <label htmlFor="days" className="text-sm font-semibold text-stone-700">📅 Number of Days</label>
                 <input
-                  id="days"
-                  type="number"
-                  required
-                  min={1}
-                  max={30}
-                  placeholder="e.g. 7"
-                  value={days}
-                  onChange={(e) => setDays(e.target.value === '' ? '' : Number(e.target.value))}
+                  id="days" type="number" required min={1} max={30} placeholder="e.g. 7"
+                  value={days} onChange={(e) => setDays(e.target.value === '' ? '' : Number(e.target.value))}
                   className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="budget" className="text-sm font-semibold text-stone-700">
-                  💰 Budget (₹)
-                </label>
+                <label htmlFor="budget" className="text-sm font-semibold text-stone-700">💰 Budget (₹)</label>
                 <input
-                  id="budget"
-                  type="number"
-                  required
-                  min={0}
-                  placeholder="e.g. 50000"
-                  value={budget}
-                  onChange={(e) => setBudget(e.target.value === '' ? '' : Number(e.target.value))}
+                  id="budget" type="number" required min={0} placeholder="e.g. 50000"
+                  value={budget} onChange={(e) => setBudget(e.target.value === '' ? '' : Number(e.target.value))}
                   className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200"
                 />
               </div>
@@ -259,20 +252,9 @@ export default function PlanPage() {
                 {INTERESTS.map(({ label, emoji }) => {
                   const selected = interests.includes(label);
                   return (
-                    <label
-                      key={label}
-                      className={`flex items-center gap-2.5 rounded-xl border-2 px-4 py-3 cursor-pointer text-sm font-medium transition-all duration-200 select-none
-                        ${selected
-                          ? 'border-orange-400 bg-gradient-to-br from-orange-50 to-rose-50 text-orange-700 shadow-sm shadow-orange-100'
-                          : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-orange-200 hover:bg-orange-50/50'
-                        }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={selected}
-                        onChange={() => toggleInterest(label)}
-                      />
+                    <label key={label} className={`flex items-center gap-2.5 rounded-xl border-2 px-4 py-3 cursor-pointer text-sm font-medium transition-all duration-200 select-none
+                      ${selected ? 'border-orange-400 bg-gradient-to-br from-orange-50 to-rose-50 text-orange-700 shadow-sm shadow-orange-100' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-orange-200 hover:bg-orange-50/50'}`}>
+                      <input type="checkbox" className="sr-only" checked={selected} onChange={() => toggleInterest(label)} />
                       <span className="text-lg">{emoji}</span>
                       {label}
                       {selected && <span className="ml-auto text-orange-500 text-xs">✓</span>}
@@ -282,12 +264,9 @@ export default function PlanPage() {
               </div>
             </div>
 
-            {/* Submit CTA */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="relative mt-1 w-full rounded-2xl bg-gradient-to-r from-orange-500 to-rose-500 animate-gradient px-8 py-4 text-white font-bold text-base shadow-lg shadow-orange-300/50 hover:shadow-xl hover:shadow-orange-400/50 hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-orange-300 disabled:opacity-60 disabled:cursor-not-allowed disabled:scale-100"
-            >
+            {/* Submit */}
+            <button type="submit" disabled={loading}
+              className="relative mt-1 w-full rounded-2xl bg-gradient-to-r from-orange-500 to-rose-500 animate-gradient px-8 py-4 text-white font-bold text-base shadow-lg shadow-orange-300/50 hover:shadow-xl hover:shadow-orange-400/50 hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-orange-300 disabled:opacity-60 disabled:cursor-not-allowed disabled:scale-100">
               {loading
                 ? <span className="flex items-center justify-center gap-2">
                     <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24" fill="none">
@@ -319,9 +298,10 @@ export default function PlanPage() {
         {/* Itinerary */}
         {itinerary && !loading && (
           <div>
-            {/* Save status banner */}
+            {/* Save banner */}
             <SaveBanner status={saveStatus} errorMsg={saveError} />
 
+            {/* Section heading */}
             <div className="flex items-center gap-3 mt-6 mb-6">
               <div className="h-px flex-1 bg-gradient-to-r from-transparent via-orange-200 to-transparent" />
               <h2 className="font-display text-2xl font-bold text-stone-800 text-center px-2">
@@ -330,13 +310,48 @@ export default function PlanPage() {
               <div className="h-px flex-1 bg-gradient-to-r from-transparent via-orange-200 to-transparent" />
             </div>
 
+            {/* Map — new format with coordinates only */}
+            {(() => {
+              const markers = buildMarkers(itinerary);
+              return markers.length > 0 ? (
+                <div className="mb-6">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-stone-400 mb-2 flex items-center gap-1.5">
+                    <span>🗺️</span> Interactive Map
+                  </p>
+                  <ItineraryMap markers={markers} />
+                  {/* Legend */}
+                  <div className="flex flex-wrap gap-3 mt-3 text-xs text-stone-500">
+                    {[
+                      { emoji: '🌅', label: 'Morning',   color: '#f97316' },
+                      { emoji: '☀️', label: 'Afternoon', color: '#0ea5e9' },
+                      { emoji: '🌙', label: 'Evening',   color: '#8b5cf6' },
+                      { emoji: '🏠', label: 'Budget hotel',    color: '#10b981' },
+                      { emoji: '🏨', label: 'Mid-range hotel', color: '#3b82f6' },
+                      { emoji: '🏰', label: 'Premium hotel',   color: '#f59e0b' },
+                    ].map(({ emoji, label, color }) => (
+                      <span key={label} className="flex items-center gap-1">
+                        <span style={{ display:'inline-block', width:10, height:10, borderRadius:'50%', background:color }} />
+                        {emoji} {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Day cards */}
             <div className="space-y-5">
               {itinerary.days.map((plan) => (
-                <DayCard key={plan.day} plan={plan} />
+                <DayCard key={plan.day} plan={plan} destination={destination} />
               ))}
             </div>
 
-            {/* Re-plan nudge */}
+            {/* Hotel section (new format only) */}
+            {itinerary.hotels && (
+              <HotelSection hotels={itinerary.hotels} destination={destination} />
+            )}
+
+            {/* Re-plan */}
             <div className="mt-8 text-center">
               <button
                 onClick={() => { setItinerary(null); setSaveStatus('idle'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}

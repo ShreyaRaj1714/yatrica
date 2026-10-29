@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 import { DayCard, type DayPlan } from '@/components/DayCard';
+import { HotelSection, type HotelsData } from '@/components/HotelSection';
 
 // --- Types ---
 
-interface Itinerary {
+interface ItineraryJson {
   days: DayPlan[];
+  hotels?: HotelsData;        // only present on new-format trips
 }
 
 interface Trip {
@@ -18,7 +20,7 @@ interface Trip {
   days: number;
   budget: number;
   interests: string[];
-  itinerary_json: Itinerary;
+  itinerary_json: ItineraryJson;
 }
 
 // --- Trip card with expandable itinerary ---
@@ -29,6 +31,9 @@ function TripCard({ trip }: { trip: Trip }) {
   const date = new Date(trip.created_at).toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
   });
+
+  const hasDays   = Array.isArray(trip.itinerary_json?.days) && trip.itinerary_json.days.length > 0;
+  const hasHotels = !!trip.itinerary_json?.hotels;
 
   return (
     <div className="bg-white rounded-2xl border border-orange-100 shadow-md shadow-orange-100/40 overflow-hidden transition-all duration-300">
@@ -51,12 +56,12 @@ function TripCard({ trip }: { trip: Trip }) {
       {/* Trip meta */}
       <div className="px-6 py-4 flex flex-wrap gap-4 border-b border-stone-100">
         <div className="flex items-center gap-1.5 text-sm text-stone-600">
-          <span className="text-base">💰</span>
+          <span>💰</span>
           <span className="font-medium">₹{trip.budget.toLocaleString('en-IN')}</span>
           <span className="text-stone-400 text-xs">budget</span>
         </div>
         <div className="flex items-center gap-1.5 text-sm text-stone-600">
-          <span className="text-base">📅</span>
+          <span>📅</span>
           <span className="font-medium">{trip.days} {trip.days === 1 ? 'day' : 'days'}</span>
         </div>
         {trip.interests?.length > 0 && (
@@ -68,27 +73,44 @@ function TripCard({ trip }: { trip: Trip }) {
             ))}
           </div>
         )}
+        {/* Format badge */}
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${hasHotels ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-stone-100 text-stone-500'}`}>
+          {hasHotels ? '✨ Rich format' : 'Classic format'}
+        </span>
       </div>
 
       {/* Toggle button */}
       <div className="px-6 py-4">
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-2 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-200 hover:shadow-md hover:scale-[1.02] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-orange-300"
-        >
-          {expanded ? '▲ Hide Itinerary' : '▼ View Itinerary'}
-        </button>
+        {hasDays ? (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-2 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-200 hover:shadow-md hover:scale-[1.02] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-orange-300"
+          >
+            {expanded ? '▲ Hide Itinerary' : '▼ View Itinerary'}
+          </button>
+        ) : (
+          <p className="text-sm text-stone-400 italic">No itinerary data available.</p>
+        )}
       </div>
 
       {/* Expandable itinerary */}
-      {expanded && (
-        <div className="px-6 pb-6 space-y-4 border-t border-stone-100 pt-4">
+      {expanded && hasDays && (
+        <div className="px-6 pb-8 border-t border-stone-100 pt-5 space-y-5">
           <h3 className="font-display text-lg font-bold text-stone-800">
-            Your {trip.days}-Day {trip.destination} Itinerary 🌍
+            {trip.days}-Day {trip.destination} Itinerary 🌍
           </h3>
-          {trip.itinerary_json?.days?.map((plan) => (
-            <DayCard key={plan.day} plan={plan} />
-          ))}
+
+          {/* Day cards — handles both old and new format */}
+          <div className="space-y-4">
+            {trip.itinerary_json.days.map((plan) => (
+              <DayCard key={plan.day} plan={plan} destination={trip.destination} />
+            ))}
+          </div>
+
+          {/* Hotels — only for new-format trips */}
+          {hasHotels && (
+            <HotelSection hotels={trip.itinerary_json.hotels!} destination={trip.destination} />
+          )}
         </div>
       )}
     </div>
@@ -102,12 +124,11 @@ function SkeletonCard() {
     <div className="bg-white rounded-2xl border border-orange-100 shadow-md animate-pulse overflow-hidden">
       <div className="h-24 bg-gradient-to-r from-orange-300 to-rose-300" />
       <div className="px-6 py-4 space-y-3">
-        <div className="h-4 bg-stone-200 rounded-full w-1/3" />
         <div className="flex gap-2">
-          <div className="h-6 bg-stone-100 rounded-full w-20" />
-          <div className="h-6 bg-stone-100 rounded-full w-20" />
+          <div className="h-5 bg-stone-200 rounded-full w-24" />
+          <div className="h-5 bg-stone-100 rounded-full w-16" />
         </div>
-        <div className="h-9 bg-orange-100 rounded-full w-36" />
+        <div className="h-9 bg-orange-100 rounded-full w-36 mt-1" />
       </div>
     </div>
   );
@@ -127,14 +148,11 @@ export default function TripsPage() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (dbError) {
-        setError(dbError.message);
-      } else {
-        setTrips(data as Trip[]);
-      }
+      if (dbError) setError(dbError.message);
+      else setTrips((data ?? []) as Trip[]);
+
       setLoading(false);
     };
-
     fetchTrips();
   }, []);
 
@@ -159,9 +177,7 @@ export default function TripsPage() {
         {/* Loading */}
         {loading && (
           <div className="space-y-5">
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
+            <SkeletonCard /><SkeletonCard /><SkeletonCard />
           </div>
         )}
 
@@ -182,16 +198,13 @@ export default function TripsPage() {
             <p className="text-5xl mb-4">✈️</p>
             <h2 className="font-display text-2xl font-bold text-stone-700 mb-2">No trips yet</h2>
             <p className="text-stone-500 text-sm mb-6">Plan your first adventure and it'll appear here.</p>
-            <Link
-              href="/plan"
-              className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 px-6 py-3 text-sm font-semibold text-white shadow-md hover:scale-105 transition-all duration-200"
-            >
+            <Link href="/plan" className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 px-6 py-3 text-sm font-semibold text-white shadow-md hover:scale-105 transition-all duration-200">
               Plan My First Trip →
             </Link>
           </div>
         )}
 
-        {/* Trip cards */}
+        {/* Trip list */}
         {!loading && !error && trips.length > 0 && (
           <div className="space-y-6">
             <p className="text-stone-500 text-sm text-right">
